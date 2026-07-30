@@ -21,6 +21,13 @@ export interface Stack {
   position: Position;
 }
 
+export interface BearLogEntry {
+  roll: number;
+  column: number;
+  action: string;
+  details?: string;
+}
+
 export interface GameState {
   board: (Stack | null)[][];
   playerPiecesInSky: number;
@@ -34,6 +41,7 @@ export interface GameState {
   winner: 'player' | 'bear' | null;
   message: string;
   lastPlayerMove: { stackId: string; height: number } | null;
+  bearLog: BearLogEntry[];
 }
 
 export function createEmptyBoard(): Stack[][] {

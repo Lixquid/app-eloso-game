@@ -63,7 +63,11 @@ export function Board() {
           <div className="sky-row">
             <div className="sky-label">SKY</div>
             {Array.from({ length: 5 }).map((_, col) => (
-              <div key={col} className="sky-cell">
+              <div 
+                key={col} 
+                className={`sky-cell ${state.validMoves.some(m => m.row === -1 && m.col === col) ? 'valid-move' : ''}`}
+                onClick={() => !state.gameOver && state.currentTurn === 'player' && state.validMoves.some(m => m.row === -1 && m.col === col) && moveStack({ row: -1, col })}
+              >
                 {state.playerPiecesInSky > col && (
                   <div className="sky-piece player" />
                 )}
@@ -135,6 +139,22 @@ export function Board() {
             {!state.gameOver && (
               <button onClick={newGame} className="new-game-btn secondary">New Game</button>
             )}
+
+            {state.bearLog.length > 0 && (
+              <div className="bear-log">
+                <h3>Bear's Turn Log</h3>
+                <ul>
+                  {state.bearLog.map((entry, idx) => (
+                    <li key={idx} className={`log-entry ${entry.action.replace(/\s+/g, '-').toLowerCase()}`}>
+                      <span className="roll">Roll: {entry.roll === -1 ? '—' : entry.roll === 6 ? '6 (blank)' : entry.roll}</span>
+                      <span className="column">Col: {entry.column === -1 ? '—' : entry.column}</span>
+                      <span className="action">{entry.action}</span>
+                      {entry.details && <span className="details">{entry.details}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </aside>
       </div>
@@ -181,4 +201,3 @@ function BoardCell({
     </button>
   );
 }
-

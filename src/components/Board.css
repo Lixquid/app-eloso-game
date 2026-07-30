@@ -110,6 +110,16 @@
   align-items: flex-end;
   justify-content: center;
   padding-bottom: 8px;
+  cursor: default;
+  transition: all 0.2s ease;
+}
+
+.sky-cell.valid-move {
+  background: linear-gradient(180deg, rgba(0, 255, 136, 0.2), transparent);
+  border: 2px solid #00ff88;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  animation: pulse-border 1.5s infinite;
 }
 
 .sky-piece {
@@ -397,4 +407,91 @@
   .stack-height {
     font-size: 0.6rem;
   }
+}
+
+.bear-log {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(255, 140, 0, 0.1);
+  border: 1px solid rgba(255, 140, 0, 0.3);
+  border-radius: 8px;
+}
+
+.bear-log h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: #ff8c00;
+}
+
+.bear-log ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.bear-log li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  margin-bottom: 0.25rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.bear-log .roll {
+  font-weight: 700;
+  color: #ffd700;
+  min-width: 70px;
+}
+
+.bear-log .column {
+  color: #00d4ff;
+  min-width: 50px;
+}
+
+.bear-log .action {
+  font-weight: 600;
+  color: #ff8c00;
+  text-transform: capitalize;
+}
+
+.bear-log .details {
+  flex-basis: 100%;
+  color: #8892b0;
+  margin-top: 0.25rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid rgba(255, 140, 0, 0.3);
+  font-size: 0.7rem;
+}
+
+.bear-log .log-entry.blank {
+  border-left: 3px solid #ff4444;
+}
+
+.bear-log .log-entry.capture {
+  border-left: 3px solid #ff8c00;
+}
+
+.bear-log .log-entry.move-down,
+.bear-log .log-entry.move-to-ground {
+  border-left: 3px solid #00d4ff;
+}
+
+.bear-log .log-entry.cave-→-board,
+.bear-log .log-entry.rain-back-→-board {
+  border-left: 3px solid #00ff88;
+}
+
+.bear-log .log-entry.rain-back-→-cave,
+.bear-log .log-entry.rain-back-capture {
+  border-left: 3px solid #ff8c00;
+}
+
+.bear-log .log-entry.merge {
+  border-left: 3px solid #ffd700;
 }

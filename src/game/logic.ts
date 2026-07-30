@@ -9,6 +9,7 @@ import {
   type Stack, 
   type Position, 
   type Player,
+  type BearLogEntry,
   createEmptyBoard 
 } from '../types/game';
 
@@ -212,6 +213,7 @@ export function createInitialState(): GameState {
     winner: null,
     message: 'Your turn. Select a stack to move.',
     lastPlayerMove: null,
+    bearLog: [],
   };
 }
 
@@ -291,6 +293,8 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
       gameOver: true,
       winner: 'player',
       message: `Victory! ${newPlayerPiecesInSky} pieces reached the Sky!`,
+      lastPlayerMove,
+      bearLog: [],
     };
   }
   
@@ -307,6 +311,8 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
       message: newPlayerPiecesInSky >= WIN_THRESHOLD 
         ? `Victory! ${newPlayerPiecesInSky} pieces in the Sky!`
         : `Defeat. No pieces remain.`,
+      lastPlayerMove,
+      bearLog: [],
     };
   }
 
@@ -329,14 +335,26 @@ function executeBearTurn(state: GameState): GameState {
   const diceCount = state.lastPlayerMove.height;
   const rolls = rollDice(diceCount).sort((a, b) => a - b);
   
-  let newState = { ...state, board: state.board.map(row => [...row]) };
+  let newState = { 
+    ...state, 
+    board: state.board.map(row => [...row]),
+    bearLog: [] as BearLogEntry[],
+  };
   newState.message = `Bear rolls: ${rolls.join(', ')}`;
 
   for (const roll of rolls) {
-    if (roll === 6) continue; // Blank
+    if (roll === 6) {
+      newState.bearLog.push({
+        roll,
+        column: -1,
+        action: 'Blank',
+        details: 'Roll of 6 is blank',
+      });
+      continue; // Blank
+    }
     
     const col = roll - 1;
-    newState = executeBearMove(newState, col);
+    newState = executeBearMove(newState, col, roll);
   }
 
   // Rain back pieces from Ground
@@ -347,11 +365,12 @@ function executeBearTurn(state: GameState): GameState {
   return endBearTurn(newState);
 }
 
-function executeBearMove(state: GameState, col: number): GameState {
+function executeBearMove(state: GameState, col: number, roll: number): GameState {
   const newBoard = state.board.map(row => [...row]);
   let newBearPiecesInCave = state.bearPiecesInCave;
   let newBearPiecesOnGround = state.bearPiecesOnGround;
   let newPlayerPiecesInPit = state.playerPiecesInPit;
+  const bearLog = [...state.bearLog];
 
   // Find bear stacks in this column
   const bearStacks: { stack: Stack; row: number }[] = [];
@@ -370,6 +389,13 @@ function executeBearMove(state: GameState, col: number): GameState {
       const newStack = createStack('bear', piecesToAdd, { row: BEAR_START_ROW, col });
       newBoard[BEAR_START_ROW][col] = newStack;
       
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Cave → Board',
+        details: `Placed ${piecesToAdd} bear piece(s) from Cave`,
+      });
+      
       // Check for capture with player stack
       const playerStack = newBoard[BEAR_START_ROW][col];
       if (playerStack && playerStack.player === 'player') {
@@ -384,7 +410,21 @@ function executeBearMove(state: GameState, col: number): GameState {
         } else {
           newBoard[BEAR_START_ROW][col] = null;
         }
+        
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Capture',
+          details: `Bear (${piecesToAdd}) captured Player (${playerStack.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
+        });
       }
+    } else {
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Blank',
+        details: 'Empty column but Cave is empty',
+      });
     }
   } else if (bearStacks.length === 1) {
     // Single stack - move it down one
@@ -394,6 +434,12 @@ function executeBearMove(state: GameState, col: number): GameState {
     if (row === BOARD_ROWS - 1) {
       // Moving off bottom to Ground
       newBearPiecesOnGround += stack.pieces;
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Move to Ground',
+        details: `Bear stack (${stack.pieces}) moved off board to Ground`,
+      });
     } else {
       const toRow = row + 1;
       const target = newBoard[toRow][col];
@@ -411,9 +457,22 @@ function executeBearMove(state: GameState, col: number): GameState {
         } else {
           newBoard[toRow][col] = null;
         }
+        
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Capture',
+          details: `Bear (${stack.pieces}) captured Player (${target.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
+        });
       } else {
         // Empty or bear stack (will merge later)
         newBoard[toRow][col] = createStack('bear', stack.pieces, { row: toRow, col });
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Move Down',
+          details: `Bear stack (${stack.pieces}) moved down one space`,
+        });
       }
     }
   } else {
@@ -424,6 +483,12 @@ function executeBearMove(state: GameState, col: number): GameState {
     if (highest.row === BOARD_ROWS - 1) {
       // Moving off bottom to Ground
       newBearPiecesOnGround += highest.stack.pieces;
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Move to Ground',
+        details: `Highest bear stack (${highest.stack.pieces}) moved off board to Ground`,
+      });
     } else {
       const toRow = highest.row + 1;
       const target = newBoard[toRow][col];
@@ -441,9 +506,22 @@ function executeBearMove(state: GameState, col: number): GameState {
         } else {
           newBoard[toRow][col] = null;
         }
+        
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Capture',
+          details: `Highest bear (${highest.stack.pieces}) captured Player (${target.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
+        });
       } else {
         // Empty or bear stack
         newBoard[toRow][col] = createStack('bear', highest.stack.pieces, { row: toRow, col });
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Move Down',
+          details: `Highest bear stack (${highest.stack.pieces}) moved down one space`,
+        });
       }
     }
   }
@@ -451,12 +529,29 @@ function executeBearMove(state: GameState, col: number): GameState {
   // Merge bear stacks in this column
   const mergedBoard = mergeBearStacks(newBoard, col);
 
+  // Check for merges and log them
+  const mergedStacks: { stack: Stack; row: number }[] = [];
+  for (let r = 0; r < BOARD_ROWS; r++) {
+    if (mergedBoard[r][col] && mergedBoard[r][col]!.player === 'bear') {
+      mergedStacks.push({ stack: mergedBoard[r][col]!, row: r });
+    }
+  }
+  if (mergedStacks.length > 1) {
+    bearLog.push({
+      roll,
+      column: col + 1,
+      action: 'Merge',
+      details: `Bear stacks merged in column ${col + 1}`,
+    });
+  }
+
   return {
     ...state,
     board: mergedBoard,
     bearPiecesInCave: newBearPiecesInCave,
     bearPiecesOnGround: newBearPiecesOnGround,
     playerPiecesInPit: newPlayerPiecesInPit,
+    bearLog,
   };
 }
 
@@ -465,6 +560,14 @@ function rainBack(state: GameState): GameState {
   let pieces = state.bearPiecesOnGround;
   let newBearPiecesInCave = state.bearPiecesInCave;
   let newPlayerPiecesInPit = state.playerPiecesInPit;
+  const bearLog = [...state.bearLog];
+
+  bearLog.push({
+    roll: -1,
+    column: -1,
+    action: 'Rain Back',
+    details: `Rain back ${pieces} piece(s) from Ground`,
+  });
 
   while (pieces > 0) {
     const roll = rollDie();
@@ -472,6 +575,12 @@ function rainBack(state: GameState): GameState {
     if (roll === 6) {
       newBearPiecesInCave++;
       pieces--;
+      bearLog.push({
+        roll,
+        column: -1,
+        action: 'Rain Back → Cave',
+        details: 'Roll of 6 sent to Cave',
+      });
       continue;
     }
 
@@ -482,6 +591,12 @@ function rainBack(state: GameState): GameState {
       // Would exceed height limit -> Cave
       newBearPiecesInCave++;
       pieces--;
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Rain Back → Cave',
+        details: `Column ${col + 1} full (5), piece sent to Cave`,
+      });
       continue;
     }
 
@@ -491,8 +606,21 @@ function rainBack(state: GameState): GameState {
       target.pieces += toAdd;
       pieces -= toAdd;
       
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Rain Back → Board',
+        details: `Added ${toAdd} piece(s) to bear stack in column ${col + 1} (now ${target.pieces})`,
+      });
+      
       if (pieces > 0) {
         newBearPiecesInCave += pieces;
+        bearLog.push({
+          roll: -1,
+          column: -1,
+          action: 'Rain Back → Cave',
+          details: `Remaining ${pieces} piece(s) sent to Cave (column full)`,
+        });
         pieces = 0;
       }
     } else if (target && target.player === 'player') {
@@ -502,6 +630,13 @@ function rainBack(state: GameState): GameState {
       newPlayerPiecesInPit += result.playerRemoved;
       newBearPiecesInCave += result.bearRemoved;
       pieces -= piecesToAdd;
+      
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Rain Back Capture',
+        details: `Rain pieces (${piecesToAdd}) captured Player (${target.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
+      });
       
       if (result.remainingPlayer > 0) {
         newBoard[BEAR_START_ROW][col] = { ...target, pieces: result.remainingPlayer };
@@ -515,6 +650,13 @@ function rainBack(state: GameState): GameState {
       const piecesToAdd = Math.min(5, pieces);
       newBoard[BEAR_START_ROW][col] = createStack('bear', piecesToAdd, { row: BEAR_START_ROW, col });
       pieces -= piecesToAdd;
+      
+      bearLog.push({
+        roll,
+        column: col + 1,
+        action: 'Rain Back → Board',
+        details: `Placed ${piecesToAdd} new bear piece(s) in empty column ${col + 1}`,
+      });
     }
   }
 
@@ -524,6 +666,7 @@ function rainBack(state: GameState): GameState {
     bearPiecesInCave: newBearPiecesInCave,
     bearPiecesOnGround: 0,
     playerPiecesInPit: newPlayerPiecesInPit,
+    bearLog,
   };
 }
 
