@@ -92,12 +92,13 @@
 }
 
 .sky-label {
-  width: 56px;
   text-align: center;
   font-size: 0.7rem;
   font-weight: 700;
   color: #00d4ff;
   letter-spacing: 0.1em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
 }
 
 .sky-cell {
@@ -251,13 +252,13 @@
 }
 
 .ground-label {
-  width: 56px;
   text-align: center;
   font-size: 0.7rem;
   font-weight: 700;
   color: #8b6914;
   letter-spacing: 0.1em;
-  padding-top: 8px;
+  margin-top: 4px;
+  text-transform: uppercase;
 }
 
 .ground-cell {

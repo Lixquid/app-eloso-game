@@ -280,7 +280,6 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
 
   // Check win/lose conditions
   const totalPlayerPieces = countPlayerPieces(newBoard);
-  const totalPieces = totalPlayerPieces + newPlayerPiecesInSky + state.playerPiecesInPit;
   
   if (newPlayerPiecesInSky >= WIN_THRESHOLD) {
     return {
@@ -298,7 +297,8 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
     };
   }
   
-  if (totalPieces === 0) {
+  if (totalPlayerPieces === 0) {
+    // No pieces left on board - game over
     return {
       ...state,
       board: newBoard,
@@ -307,10 +307,8 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
       selectedStackId: null,
       validMoves: [],
       gameOver: true,
-      winner: newPlayerPiecesInSky >= WIN_THRESHOLD ? 'player' : 'bear',
-      message: newPlayerPiecesInSky >= WIN_THRESHOLD 
-        ? `Victory! ${newPlayerPiecesInSky} pieces in the Sky!`
-        : `Defeat. No pieces remain.`,
+      winner: 'bear',
+      message: `Game over. ${newPlayerPiecesInSky} pieces reached the Sky.`, // < 10 = loss
       lastPlayerMove,
       bearLog: [],
     };
@@ -671,28 +669,16 @@ function rainBack(state: GameState): GameState {
 }
 
 function endBearTurn(state: GameState): GameState {
-  const totalPlayerPieces = countPlayerPieces(state.board) + state.playerPiecesInSky + state.playerPiecesInPit;
+  const playerPiecesOnBoard = countPlayerPieces(state.board);
   
-  if (totalPlayerPieces === 0) {
+  if (playerPiecesOnBoard === 0) {
+    // No pieces left on board - game over
     return {
       ...state,
       currentTurn: 'player',
       gameOver: true,
       winner: state.playerPiecesInSky >= WIN_THRESHOLD ? 'player' : 'bear',
       message: state.playerPiecesInSky >= WIN_THRESHOLD 
-        ? `Victory! ${state.playerPiecesInSky} pieces in the Sky!`
-        : 'All pieces lost. Bear wins.',
-    };
-  }
-
-  if (state.playerPiecesInSky + countPlayerPieces(state.board) === 0) {
-    // Last piece left the board
-    return {
-      ...state,
-      currentTurn: 'player',
-      gameOver: true,
-      winner: state.playerPiecesInSky >= WIN_THRESHOLD ? 'player' : 'bear',
-      message: state.playerPiecesInSky >= WIN_THRESHOLD
         ? `Victory! ${state.playerPiecesInSky} pieces in the Sky!`
         : `Game over. ${state.playerPiecesInSky} pieces reached the Sky.`,
     };

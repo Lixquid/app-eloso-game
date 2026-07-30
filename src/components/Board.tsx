@@ -59,9 +59,10 @@ export function Board() {
 
       <div className="game-board-wrapper">
         <div className="board-container">
+          {/* Sky label */}
+          <div className="sky-label">SKY</div>
           {/* Sky row */}
           <div className="sky-row">
-            <div className="sky-label">SKY</div>
             {Array.from({ length: 5 }).map((_, col) => (
               <div 
                 key={col} 
@@ -96,7 +97,6 @@ export function Board() {
 
           {/* Ground row */}
           <div className="ground-row">
-            <div className="ground-label">GROUND</div>
             {Array.from({ length: 5 }).map((_, col) => (
               <div key={col} className="ground-cell">
                 {state.bearPiecesOnGround > col && (
@@ -105,6 +105,8 @@ export function Board() {
               </div>
             ))}
           </div>
+          {/* Ground label */}
+          <div className="ground-label">GROUND</div>
         </div>
 
         <aside className="sidebar">
