@@ -128,36 +128,6 @@ function resolveCapture(playerPieces: number, bearPieces: number): {
   };
 }
 
-function mergeBearStacks(board: (Stack | null)[][], col: number): (Stack | null)[][] {
-  const newBoard = board.map(row => [...row]) as (Stack | null)[][];
-  
-  const bearStacks: { stack: Stack; row: number }[] = [];
-  for (let r = 0; r < BOARD_ROWS; r++) {
-    if (newBoard[r][col] && newBoard[r][col]!.player === 'bear') {
-      bearStacks.push({ stack: newBoard[r][col]!, row: r });
-    }
-  }
-  
-  if (bearStacks.length > 1) {
-    // Sort by row (bottom first)
-    bearStacks.sort((a, b) => b.row - a.row);
-    
-    let mergedStack = bearStacks[0].stack;
-    let mergedRow = bearStacks[0].row;
-    
-    for (let i = 1; i < bearStacks.length; i++) {
-      const { stack, row } = bearStacks[i];
-      mergedStack.pieces += stack.pieces;
-      newBoard[row][col] = null;
-    }
-    
-    newBoard[mergedRow][col] = mergedStack;
-    mergedStack.position = { row: mergedRow, col };
-  }
-  
-  return newBoard;
-}
-
 export function createInitialState(): GameState {
   const board = createEmptyBoard();
   
@@ -278,27 +248,12 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
 
   const lastPlayerMove = { stackId: state.selectedStackId!, height: stack.pieces };
 
-  // Check win/lose conditions
+  // Check if all player pieces have left the board
   const totalPlayerPieces = countPlayerPieces(newBoard);
-  
-  if (newPlayerPiecesInSky >= WIN_THRESHOLD) {
-    return {
-      ...state,
-      board: newBoard,
-      playerPiecesInSky: newPlayerPiecesInSky,
-      currentTurn: 'player',
-      selectedStackId: null,
-      validMoves: [],
-      gameOver: true,
-      winner: 'player',
-      message: `Victory! ${newPlayerPiecesInSky} pieces reached the Sky!`,
-      lastPlayerMove,
-      bearLog: [],
-    };
-  }
   
   if (totalPlayerPieces === 0) {
     // No pieces left on board - game over
+    const isWin = newPlayerPiecesInSky >= WIN_THRESHOLD;
     return {
       ...state,
       board: newBoard,
@@ -307,8 +262,10 @@ export function moveStack(state: GameState, targetPos: Position): GameState {
       selectedStackId: null,
       validMoves: [],
       gameOver: true,
-      winner: 'bear',
-      message: `Game over. ${newPlayerPiecesInSky} pieces reached the Sky.`, // < 10 = loss
+      winner: isWin ? 'player' : 'bear',
+      message: isWin 
+        ? `Victory! ${newPlayerPiecesInSky} pieces reached the Sky!`
+        : `Game over. ${newPlayerPiecesInSky} pieces reached the Sky.`,
       lastPlayerMove,
       bearLog: [],
     };
@@ -462,8 +419,17 @@ function executeBearMove(state: GameState, col: number, roll: number): GameState
           action: 'Capture',
           details: `Bear (${stack.pieces}) captured Player (${target.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
         });
+      } else if (target && target.player === 'bear') {
+        // Merge with bear stack
+        target.pieces += stack.pieces;
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Merge',
+          details: `Bear stack (${stack.pieces}) merged into bear stack at row ${toRow} (now ${target.pieces})`,
+        });
       } else {
-        // Empty or bear stack (will merge later)
+        // Empty
         newBoard[toRow][col] = createStack('bear', stack.pieces, { row: toRow, col });
         bearLog.push({
           roll,
@@ -511,8 +477,17 @@ function executeBearMove(state: GameState, col: number, roll: number): GameState
           action: 'Capture',
           details: `Highest bear (${highest.stack.pieces}) captured Player (${target.pieces}) → Player loses ${result.playerRemoved}, Bear loses ${result.bearRemoved}`,
         });
+      } else if (target && target.player === 'bear') {
+        // Merge with bear stack
+        target.pieces += highest.stack.pieces;
+        bearLog.push({
+          roll,
+          column: col + 1,
+          action: 'Merge',
+          details: `Highest bear stack (${highest.stack.pieces}) merged into bear stack at row ${toRow} (now ${target.pieces})`,
+        });
       } else {
-        // Empty or bear stack
+        // Empty
         newBoard[toRow][col] = createStack('bear', highest.stack.pieces, { row: toRow, col });
         bearLog.push({
           roll,
@@ -524,28 +499,10 @@ function executeBearMove(state: GameState, col: number, roll: number): GameState
     }
   }
 
-  // Merge bear stacks in this column
-  const mergedBoard = mergeBearStacks(newBoard, col);
-
-  // Check for merges and log them
-  const mergedStacks: { stack: Stack; row: number }[] = [];
-  for (let r = 0; r < BOARD_ROWS; r++) {
-    if (mergedBoard[r][col] && mergedBoard[r][col]!.player === 'bear') {
-      mergedStacks.push({ stack: mergedBoard[r][col]!, row: r });
-    }
-  }
-  if (mergedStacks.length > 1) {
-    bearLog.push({
-      roll,
-      column: col + 1,
-      action: 'Merge',
-      details: `Bear stacks merged in column ${col + 1}`,
-    });
-  }
-
+  // No global merge - merges only happen when a stack moves into another bear stack
   return {
     ...state,
-    board: mergedBoard,
+    board: newBoard,
     bearPiecesInCave: newBearPiecesInCave,
     bearPiecesOnGround: newBearPiecesOnGround,
     playerPiecesInPit: newPlayerPiecesInPit,
