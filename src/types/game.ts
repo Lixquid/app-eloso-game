@@ -42,6 +42,15 @@ export interface GameState {
   message: string;
   lastPlayerMove: { stackId: string; height: number } | null;
   bearLog: BearLogEntry[];
+  animatingMove?: AnimatingMove | null;
+}
+
+export interface AnimatingMove {
+  stack: Stack;
+  from: Position;
+  to: Position;
+  startTime: number;
+  duration: number;
 }
 
 export function createEmptyBoard(): Stack[][] {
