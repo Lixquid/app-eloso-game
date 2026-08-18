@@ -3,7 +3,8 @@ import type { GameState, Position } from '../types/game';
 import { 
   createInitialState, 
   selectStack, 
-  moveStack 
+  moveStack,
+  processNextBearMove
 } from '../game/logic';
 
 export function useGame() {
@@ -21,10 +22,15 @@ export function useGame() {
     setState(createInitialState());
   }, []);
 
+  const handleProcessNextBearMove = useCallback(() => {
+    setState(prev => processNextBearMove(prev));
+  }, []);
+
   return {
     state,
     selectStack: handleSelectStack,
     moveStack: handleMoveStack,
     newGame: handleNewGame,
+    processNextBearMove: handleProcessNextBearMove,
   };
 }

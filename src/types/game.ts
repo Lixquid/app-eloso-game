@@ -43,6 +43,17 @@ export interface GameState {
   lastPlayerMove: { stackId: string; height: number } | null;
   bearLog: BearLogEntry[];
   animatingMove?: AnimatingMove | null;
+  bearMoveQueue?: BearMove[];
+  processingBearMoves?: boolean;
+}
+
+export interface BearMove {
+  stack: Stack;
+  from: Position;
+  to: Position;
+  action: 'move' | 'capture' | 'merge' | 'cave-to-board' | 'move-to-ground' | 'rain-back' | 'rain-back-capture' | 'rain-back-cave';
+  details?: string;
+  logEntry?: BearLogEntry;
 }
 
 export interface AnimatingMove {

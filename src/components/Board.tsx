@@ -33,6 +33,24 @@ function getSkyCellPixelPosition(col: number, dims: BoardDimensions): { x: numbe
   return { x, y };
 }
 
+function getGroundCellPixelPosition(col: number, dims: BoardDimensions): { x: number; y: number } {
+  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
+  // Ground row is below the board element.
+  // Board has 6 rows (0-5), so ground is at row 6 (index 6)
+  // Board padding: 8px, each cell: cellSize + gap
+  const y = dims.boardOffset.y + 6 * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
+  return { x, y };
+}
+
+function getCaveCellPixelPosition(col: number, dims: BoardDimensions): { x: number; y: number } {
+  // Cave is above the sky (off-screen top)
+  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
+  const skyRowMarginBottom = 8;
+  const skyPieceOffsetFromBottom = 8 + 10;
+  const y = dims.boardOffset.y - skyRowMarginBottom - BOARD_PADDING - skyPieceOffsetFromBottom - 50; // Extra offset for cave
+  return { x, y };
+}
+
 interface AnimatingStackProps {
   stack: Stack;
   from: Position;
@@ -42,17 +60,49 @@ interface AnimatingStackProps {
 }
 
 function AnimatingStack({ stack, from, to, progress, dims }: AnimatingStackProps) {
-  const isSkyMove = to.row === -1;
+  const isSkyMove = to.row === -1 && from.row >= 0 && from.row < 6;
+  const isGroundMove = to.row === 6; // BOARD_ROWS = 6
+  const isCaveMove = to.row === -1 && from.row === 6; // From ground to cave
+  const isRainBackMove = from.row === 6 && to.row === 0; // From ground to board (BEAR_START_ROW)
+  const isRainBackCaveMove = from.row === 6 && to.row === -1; // From ground to cave
   
   let currentX: number;
   let currentY: number;
   
   if (isSkyMove) {
+    // Player moves to sky
     const fromPos = getCellPixelPosition(from.row, from.col, dims);
     const toPos = getSkyCellPixelPosition(to.col, dims);
     currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
     currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
+  } else if (isGroundMove) {
+    // Bear moves to ground
+    const fromPos = getCellPixelPosition(from.row, from.col, dims);
+    const toPos = getGroundCellPixelPosition(to.col, dims);
+    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
+    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
+  } else if (isCaveMove) {
+    // Bear moves from ground to cave (rain back cave)
+    const fromPos = getGroundCellPixelPosition(from.col, dims);
+    const toPos = getCaveCellPixelPosition(to.col, dims);
+    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
+    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
+  } else if (isRainBackMove || isRainBackCaveMove) {
+    // Rain back: pieces come from ground to board or cave
+    const fromPos = getGroundCellPixelPosition(from.col, dims);
+    const toPos = isRainBackMove 
+      ? getCellPixelPosition(to.row, to.col, dims)
+      : getCaveCellPixelPosition(to.col, dims);
+    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
+    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
+  } else if (from.row === -1 && to.row === 0) {
+    // Cave to board (bear spawns from cave)
+    const fromPos = getCaveCellPixelPosition(from.col, dims);
+    const toPos = getCellPixelPosition(to.row, to.col, dims);
+    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
+    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
   } else {
+    // Regular board move
     const fromPos = getCellPixelPosition(from.row, from.col, dims);
     const toPos = getCellPixelPosition(to.row, to.col, dims);
     currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
@@ -105,7 +155,8 @@ export function Board() {
     state, 
     selectStack, 
     moveStack, 
-    newGame 
+    newGame,
+    processNextBearMove
   } = useGame();
 
   const boardRef = useRef<HTMLDivElement>(null);
@@ -136,6 +187,14 @@ export function Board() {
     return () => window.removeEventListener('resize', measureBoard);
   }, [measureBoard]);
 
+  // Sync state.animatingMove (from bear moves) to local animatingMove
+  useEffect(() => {
+    if (state.animatingMove && (!animatingMove || state.animatingMove.startTime !== animatingMove.startTime)) {
+      setAnimatingMove(state.animatingMove);
+      setAnimProgress(0);
+    }
+  }, [state.animatingMove, state.currentTurn]);
+
   // Calculate animation progress using useEffect for smooth animation
   useEffect(() => {
     if (!animatingMove) {
@@ -143,8 +202,8 @@ export function Board() {
       return;
     }
 
-    // Cancel animation if game is reset or turn changes
-    if (state.gameOver || !state.selectedStackId) {
+    // Cancel animation if game is reset
+    if (state.gameOver) {
       setAnimatingMove(null);
       setAnimProgress(0);
       if (animationFrameRef.current) {
@@ -165,8 +224,13 @@ export function Board() {
       if (progress < 1) {
         animationFrameRef.current = requestAnimationFrame(animate);
       } else {
-        // Animation complete - apply the move
-        moveStack(animatingMove.to);
+        // Animation complete - apply the move based on whose turn it is
+        if (state.currentTurn === 'player') {
+          moveStack(animatingMove.to);
+        } else if (state.currentTurn === 'bear' && state.processingBearMoves) {
+          // For bear moves, process the next move in the queue
+          processNextBearMove();
+        }
         setAnimatingMove(null);
         setAnimProgress(0);
       }
@@ -178,7 +242,7 @@ export function Board() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [animatingMove, moveStack]);
+  }, [animatingMove, moveStack, state.currentTurn, state.processingBearMoves, processNextBearMove]);
 
   const handleCellClick = (row: number, col: number, stack: Stack | null) => {
     if (state.gameOver || animatingMove) return;
