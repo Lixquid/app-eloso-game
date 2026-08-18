@@ -385,7 +385,7 @@ function executeBearTurn(state: GameState): GameState {
   
   for (const roll of rolls) {
     if (roll === 6) {
-      bearLog.push({
+      simState.bearLog.push({
         roll,
         column: -1,
         action: 'Blank',
