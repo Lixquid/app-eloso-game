@@ -64,6 +64,14 @@ export interface AnimatingMove {
   duration: number;
 }
 
+export interface AuditResult {
+  isValid: boolean;
+  message: string;
+  possibleCause?: string;
+}
+
+export const TOTAL_PIECES_PER_SIDE = 12;
+
 export function createEmptyBoard(): Stack[][] {
   return Array(BOARD_ROWS).fill(null).map(() => Array(BOARD_COLS).fill(null));
 }

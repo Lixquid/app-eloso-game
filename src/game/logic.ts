@@ -5,12 +5,14 @@ import {
   PLAYER_START_ROW, 
   BEAR_START_ROW,
   WIN_THRESHOLD,
+  TOTAL_PIECES_PER_SIDE,
   type GameState, 
   type Stack, 
   type Position, 
   type Player,
   type BearLogEntry,
   type BearMove,
+  type AuditResult,
   createEmptyBoard 
 } from '../types/game';
 
@@ -66,6 +68,77 @@ function isPathClear(board: (Stack | null)[][], from: Position, to: Position): b
   return true;
 }
 
+function countPiecesOnBoard(board: (Stack | null)[][], player: Player): number {
+  let count = 0;
+  for (const row of board) {
+    for (const stack of row) {
+      if (stack && stack.player === player) count += stack.pieces;
+    }
+  }
+  return count;
+}
+
+export function auditGameState(state: GameState): AuditResult {
+  const playerOnBoard = countPiecesOnBoard(state.board, 'player');
+  const bearOnBoard = countPiecesOnBoard(state.board, 'bear');
+
+  const playerTotal = playerOnBoard + state.playerPiecesInSky + state.playerPiecesInPit;
+  const bearTotal = bearOnBoard + state.bearPiecesInCave;
+
+  const lastBearAction = state.bearLog.length > 0 ? state.bearLog[state.bearLog.length - 1].action : 'unknown';
+
+  if (playerTotal !== TOTAL_PIECES_PER_SIDE) {
+    return {
+      isValid: false,
+      message: `Player piece count mismatch: ${playerTotal}/${TOTAL_PIECES_PER_SIDE} (board: ${playerOnBoard}, sky: ${state.playerPiecesInSky}, pit: ${state.playerPiecesInPit})`,
+      possibleCause: getAuditCause('player', lastBearAction, playerTotal),
+    };
+  }
+
+  if (bearTotal !== TOTAL_PIECES_PER_SIDE) {
+    return {
+      isValid: false,
+      message: `Bear piece count mismatch: ${bearTotal}/${TOTAL_PIECES_PER_SIDE} (board: ${bearOnBoard}, cave: ${state.bearPiecesInCave})`,
+      possibleCause: getAuditCause('bear', lastBearAction, bearTotal),
+    };
+  }
+
+  return { isValid: true, message: 'OK' };
+}
+
+function getAuditCause(_side: 'player' | 'bear', lastAction: string, actualTotal: number): string {
+  const diff = actualTotal - TOTAL_PIECES_PER_SIDE;
+  const gained = diff > 0;
+
+  const causes: Record<string, string> = {
+    'Capture': gained
+      ? 'Bear capture logic may be incorrectly adding pieces instead of removing them'
+      : 'Bear capture may be removing too many pieces or not spawning replacement pieces',
+    'Merge': gained
+      ? 'Bear merge may be duplicating pieces (mutating instead of creating new stack)'
+      : 'Bear merge may be losing pieces during combination',
+    'Move Down': gained
+      ? 'Bear move may be creating duplicate pieces'
+      : 'Bear move may be losing pieces when moving',
+    'Cave → Board': gained
+      ? 'Cave spawn may be adding extra pieces beyond what cave contains'
+      : 'Cave spawn may not be placing all pieces from cave',
+    'Move to Ground': gained
+      ? 'Ground transition may not be removing pieces from board correctly'
+      : 'Ground transition may be removing pieces that should stay',
+    'Rain Back → Board': gained
+      ? 'Rain back may be spawning extra pieces from ground'
+      : 'Rain back may be losing pieces when placing on board',
+    'Rain Back Capture': gained
+      ? 'Rain back capture may not be removing captured pieces correctly'
+      : 'Rain back capture may be removing too many pieces',
+    'Rain Back → Cave': gained
+      ? 'Rain back to cave may be adding pieces that don\'t exist'
+      : 'Rain back to cave may not be sending all remaining pieces',
+  };
+
+  return causes[lastAction] || `Unknown issue during '${lastAction}' action`;
+}
 export function getValidMoves(board: (Stack | null)[][], stack: Stack): Position[] {
   const moves: Position[] = [];
   const maxDist = stack.pieces;
@@ -554,13 +627,14 @@ function executeBearMove(state: GameState, col: number, roll: number): GameState
           logEntry,
         });
       } else if (target && target.player === 'bear') {
-        // Merge with bear stack
-        target.pieces += stack.pieces;
+        // Merge with bear stack - create new stack to avoid mutating original
+        const mergedPieces = target.pieces + stack.pieces;
+        newBoard[toRow][col] = { ...target, pieces: mergedPieces };
         const logEntry: BearLogEntry = {
           roll,
           column: col + 1,
           action: 'Merge',
-          details: `Bear stack (${stack.pieces}) merged into bear stack at row ${toRow} (now ${target.pieces})`,
+          details: `Bear stack (${stack.pieces}) merged into bear stack at row ${toRow} (now ${mergedPieces})`,
         };
         bearLog.push(logEntry);
         
@@ -650,13 +724,14 @@ function executeBearMove(state: GameState, col: number, roll: number): GameState
           logEntry,
         });
       } else if (target && target.player === 'bear') {
-        // Merge with bear stack
-        target.pieces += highest.stack.pieces;
+        // Merge with bear stack - create new stack to avoid mutating original
+        const mergedPieces = target.pieces + highest.stack.pieces;
+        newBoard[toRow][col] = { ...target, pieces: mergedPieces };
         const logEntry: BearLogEntry = {
           roll,
           column: col + 1,
           action: 'Merge',
-          details: `Highest bear stack (${highest.stack.pieces}) merged into bear stack at row ${toRow} (now ${target.pieces})`,
+          details: `Highest bear stack (${highest.stack.pieces}) merged into bear stack at row ${toRow} (now ${mergedPieces})`,
         };
         bearLog.push(logEntry);
         
@@ -712,6 +787,8 @@ export function processNextBearMove(state: GameState): GameState {
   const remainingQueue = state.bearMoveQueue.slice(1);
   
   // Apply the move to the board immediately, but start animation
+  // Resource counts (bearPiecesInCave, playerPiecesInPit, bearPiecesOnGround) are already
+  // set to their FINAL values by executeBearTurn, so we only update the board here.
   const newBoard = state.board.map(row => [...row]);
   
   // Clear the source position (only if on board)
@@ -733,11 +810,11 @@ export function processNextBearMove(state: GameState): GameState {
     } else {
       newBoard[nextMove.to.row][nextMove.to.col] = { ...nextMove.stack, position: nextMove.to };
     }
-  } else if (nextMove.action === 'capture') {
+  } else if (nextMove.action === 'capture' || nextMove.action === 'rain-back-capture') {
     // Capture - both stacks may be partially or fully removed
+    // Result already accounted for in final resource counts from executeBearTurn
     const target = newBoard[nextMove.to.row][nextMove.to.col];
     if (target && target.player === 'player') {
-      // Capture handled in executeBearMove/rainBack, just place result
       const result = resolveCapture(target.pieces, nextMove.stack.pieces);
       if (result.remainingPlayer > 0) {
         newBoard[nextMove.to.row][nextMove.to.col] = { ...target, pieces: result.remainingPlayer };
@@ -963,8 +1040,15 @@ function endBearTurn(state: GameState): GameState {
       winner: state.playerPiecesInSky >= WIN_THRESHOLD ? 'player' : 'bear',
       message: state.playerPiecesInSky >= WIN_THRESHOLD 
         ? `Victory! ${state.playerPiecesInSky} pieces in the Sky!`
-        : `Game over. ${state.playerPiecesInSky} pieces reached the Sky.`,
+        : `Game over. ${state.playerPiecesInSky} pieces reached the Sky.`, 
     };
+  }
+
+  // Audit game state at start of player's turn
+  const audit = auditGameState({ ...state, currentTurn: 'player' });
+  if (!audit.isValid) {
+    console.error('GAME AUDIT FAILED:', audit.message);
+    if (audit.possibleCause) console.error('Possible cause:', audit.possibleCause);
   }
 
   return {
