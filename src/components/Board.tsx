@@ -1,115 +1,93 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useGame } from '../hooks/useGame';
-import type { Stack, Position, AnimatingMove } from '../types/game';
+import type { Stack, Position } from '../types/game';
+import {
+  BOARD_ROWS,
+  BOARD_COLS,
+  WIN_THRESHOLD,
+  SKY_TARGET,
+  ANIMATION_DURATION_MS,
+} from '../types/game';
 import './Board.css';
 
-const CELL_GAP = 4;
-const BOARD_PADDING = 8;
-const ANIMATION_DURATION = 300; // ms
-
-interface BoardDimensions {
-  cellSize: number;
-  boardOffset: { x: number; y: number };
+interface Point {
+  x: number;
+  y: number;
 }
 
-function getCellPixelPosition(row: number, col: number, dims: BoardDimensions): { x: number; y: number } {
-  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  const y = dims.boardOffset.y + row * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  return { x, y };
+/**
+ * Board geometry measured from the real DOM elements (board cells, sky cells,
+ * ground cells) relative to the board container, so animations stay aligned
+ * with the CSS layout without duplicating CSS pixel values.
+ */
+interface BoardDims {
+  cellW: number;
+  cellH: number;
+  pitchX: number;
+  pitchY: number;
+  originX: number;
+  originY: number;
+  skyCenters: Point[];
+  groundCenters: Point[];
 }
 
-function getSkyCellPixelPosition(col: number, dims: BoardDimensions): { x: number; y: number } {
-  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  // Sky row is above the board element.
-  // Board element has padding: 8px (BOARD_PADDING)
-  // Sky row: height 40px, margin-bottom: 8px
-  // Sky label: ~20px height (not in board element)
-  // Sky piece: aligned to flex-end with padding-bottom: 8px, piece radius 10px
-  // So piece center is at: -(sky-row-gap + board-padding + sky-piece-offset-from-bottom)
-  // = -(8 + 8 + 8 + 10) = -34px from board padding box top
-  const skyRowMarginBottom = 8;
-  const skyPieceOffsetFromBottom = 8 + 10; // padding-bottom + piece radius
-  const y = dims.boardOffset.y - skyRowMarginBottom - BOARD_PADDING - skyPieceOffsetFromBottom;
-  return { x, y };
+const EMPTY_DIMS: BoardDims = {
+  cellW: 0,
+  cellH: 0,
+  pitchX: 0,
+  pitchY: 0,
+  originX: 0,
+  originY: 0,
+  skyCenters: [],
+  groundCenters: [],
+};
+
+/** How far above the sky row the (virtual) Cave sits. */
+const CAVE_RISE = 56;
+
+function cellCenter(dims: BoardDims, row: number, col: number): Point {
+  return {
+    x: dims.originX + col * dims.pitchX + dims.cellW / 2,
+    y: dims.originY + row * dims.pitchY + dims.cellH / 2,
+  };
 }
 
-function getGroundCellPixelPosition(col: number, dims: BoardDimensions): { x: number; y: number } {
-  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  // Ground row is below the board element.
-  // Board has 6 rows (0-5), so ground is at row 6 (index 6)
-  // Board padding: 8px, each cell: cellSize + gap
-  const y = dims.boardOffset.y + 6 * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  return { x, y };
+function clampCol(col: number): number {
+  return Math.max(0, Math.min(BOARD_COLS - 1, col));
 }
 
-function getCaveCellPixelPosition(col: number, dims: BoardDimensions): { x: number; y: number } {
-  // Cave is above the sky (off-screen top)
-  const x = dims.boardOffset.x + col * (dims.cellSize + CELL_GAP) + dims.cellSize / 2;
-  const skyRowMarginBottom = 8;
-  const skyPieceOffsetFromBottom = 8 + 10;
-  const y = dims.boardOffset.y - skyRowMarginBottom - BOARD_PADDING - skyPieceOffsetFromBottom - 50; // Extra offset for cave
-  return { x, y };
+function pointForPosition(pos: Position, kind: 'player' | 'bear', dims: BoardDims): Point {
+  if (pos.row === -1) {
+    // Row -1 is the Sky for player moves, the Cave for bear pieces.
+    const col = clampCol(pos.col);
+    const sky = dims.skyCenters[col] ?? cellCenter(dims, 0, col);
+    return kind === 'player' ? sky : { x: sky.x, y: sky.y - CAVE_RISE };
+  }
+  if (pos.row >= BOARD_ROWS) {
+    return dims.groundCenters[clampCol(pos.col)] ?? cellCenter(dims, BOARD_ROWS - 1, clampCol(pos.col));
+  }
+  return cellCenter(dims, pos.row, pos.col);
+}
+
+interface ActiveAnim {
+  kind: 'player' | 'bear';
+  stack: Stack;
+  from: Position;
+  to: Position;
+  startTime: number;
 }
 
 interface AnimatingStackProps {
   stack: Stack;
-  from: Position;
-  to: Position;
+  from: Point;
+  to: Point;
   progress: number;
-  dims: BoardDimensions;
 }
 
-function AnimatingStack({ stack, from, to, progress, dims }: AnimatingStackProps) {
-  const isSkyMove = to.row === -1 && from.row >= 0 && from.row < 6;
-  const isGroundMove = to.row === 6; // BOARD_ROWS = 6
-  const isCaveMove = to.row === -1 && from.row === 6; // From ground to cave
-  const isRainBackMove = from.row === 6 && to.row === 0; // From ground to board (BEAR_START_ROW)
-  const isRainBackCaveMove = from.row === 6 && to.row === -1; // From ground to cave
-  
-  let currentX: number;
-  let currentY: number;
-  
-  if (isSkyMove) {
-    // Player moves to sky
-    const fromPos = getCellPixelPosition(from.row, from.col, dims);
-    const toPos = getSkyCellPixelPosition(to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  } else if (isGroundMove) {
-    // Bear moves to ground
-    const fromPos = getCellPixelPosition(from.row, from.col, dims);
-    const toPos = getGroundCellPixelPosition(to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  } else if (isCaveMove) {
-    // Bear moves from ground to cave (rain back cave)
-    const fromPos = getGroundCellPixelPosition(from.col, dims);
-    const toPos = getCaveCellPixelPosition(to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  } else if (isRainBackMove || isRainBackCaveMove) {
-    // Rain back: pieces come from ground to board or cave
-    const fromPos = getGroundCellPixelPosition(from.col, dims);
-    const toPos = isRainBackMove 
-      ? getCellPixelPosition(to.row, to.col, dims)
-      : getCaveCellPixelPosition(to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  } else if (from.row === -1 && to.row === 0) {
-    // Cave to board (bear spawns from cave)
-    const fromPos = getCaveCellPixelPosition(from.col, dims);
-    const toPos = getCellPixelPosition(to.row, to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  } else {
-    // Regular board move
-    const fromPos = getCellPixelPosition(from.row, from.col, dims);
-    const toPos = getCellPixelPosition(to.row, to.col, dims);
-    currentX = fromPos.x + (toPos.x - fromPos.x) * progress;
-    currentY = fromPos.y + (toPos.y - fromPos.y) * progress;
-  }
-
-  const pieceColor = stack.player === 'player' 
+function AnimatingStack({ stack, from, to, progress }: AnimatingStackProps) {
+  const currentX = from.x + (to.x - from.x) * progress;
+  const currentY = from.y + (to.y - from.y) * progress;
+  const pieceColor = stack.player === 'player'
     ? 'linear-gradient(135deg, #ffffff, #a0d4f8)'
     : 'linear-gradient(135deg, #ffcc00, #e67300)';
 
@@ -138,172 +116,192 @@ function AnimatingStack({ stack, from, to, progress, dims }: AnimatingStackProps
           />
         ))}
         {stack.pieces > 5 && (
-          <div className="piece-count" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#ffd700', textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>
-            +{stack.pieces - 5}
-          </div>
+          <div className="piece-count">+{stack.pieces - 5}</div>
         )}
       </div>
-      <div className="stack-height" style={{ fontSize: '0.7rem', fontWeight: 700, color: '#ffd700', textShadow: '0 1px 2px rgba(0,0,0,0.5)', background: 'rgba(0,0,0,0.5)', padding: '1px 6px', borderRadius: 4 }}>
-        {stack.pieces}
-      </div>
+      <div className="stack-height">{stack.pieces}</div>
     </div>
   );
 }
 
 export function Board() {
-  const { 
-    state, 
-    selectStack, 
-    moveStack, 
+  const {
+    state,
+    selectStack,
+    moveStack,
     newGame,
-    processNextBearMove
+    processNextBearMove,
   } = useGame();
 
+  const containerRef = useRef<HTMLDivElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
-  const [boardDims, setBoardDims] = useState<BoardDimensions>({
-    cellSize: 60,
-    boardOffset: { x: 0, y: 0 },
-  });
-  const [animatingMove, setAnimatingMove] = useState<AnimatingMove | null>(null);
+  const [dims, setDims] = useState<BoardDims>(EMPTY_DIMS);
+  const [anim, setAnim] = useState<ActiveAnim | null>(null);
   const [animProgress, setAnimProgress] = useState(0);
-  const animationFrameRef = useRef<number | null>(null);
 
-  // Measure board dimensions on mount and resize
+  // Measure the board geometry from the actual rendered cells.
   const measureBoard = useCallback(() => {
-    if (boardRef.current) {
-      const rect = boardRef.current.getBoundingClientRect();
-      // Cell width = (board width - padding*2 - gap*4) / 5
-      const cellSize = (rect.width - BOARD_PADDING * 2 - CELL_GAP * 4) / 5;
-      setBoardDims({
-        cellSize,
-        boardOffset: { x: BOARD_PADDING, y: BOARD_PADDING },
-      });
-    }
+    const container = containerRef.current;
+    const board = boardRef.current;
+    if (!container || !board) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const cells = board.querySelectorAll<HTMLButtonElement>('.cell');
+    if (cells.length < BOARD_ROWS * BOARD_COLS) return;
+
+    const c00 = cells[0].getBoundingClientRect(); // row 0, col 0
+    const c01 = cells[1].getBoundingClientRect(); // row 0, col 1
+    const r10 = cells[BOARD_COLS].getBoundingClientRect(); // row 1, col 0
+
+    const skyCells = Array.from(container.querySelectorAll<HTMLDivElement>('.sky-cell'));
+    const groundCells = Array.from(container.querySelectorAll<HTMLDivElement>('.ground-cell'));
+    if (skyCells.length < BOARD_COLS || groundCells.length < BOARD_COLS) return;
+
+    const center = (r: DOMRect): Point => ({
+      x: r.left - containerRect.left + r.width / 2,
+      y: r.top - containerRect.top + r.height / 2,
+    });
+
+    setDims({
+      cellW: c00.width,
+      cellH: c00.height,
+      pitchX: c01.left - c00.left,
+      pitchY: r10.top - c00.top,
+      originX: c00.left - containerRect.left,
+      originY: c00.top - containerRect.top,
+      skyCenters: skyCells.map(c => center(c.getBoundingClientRect())),
+      groundCenters: groundCells.map(c => center(c.getBoundingClientRect())),
+    });
   }, []);
 
   useEffect(() => {
     measureBoard();
+    const container = containerRef.current;
+    if (container && typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(measureBoard);
+      observer.observe(container);
+      return () => observer.disconnect();
+    }
     window.addEventListener('resize', measureBoard);
     return () => window.removeEventListener('resize', measureBoard);
   }, [measureBoard]);
 
-  // Sync state.animatingMove (from bear moves) to local animatingMove
+  // Start animating a bear step as soon as one is pending.
   useEffect(() => {
-    if (state.animatingMove && (!animatingMove || state.animatingMove.startTime !== animatingMove.startTime)) {
-      setAnimatingMove(state.animatingMove);
-      setAnimProgress(0);
+    if (anim || state.gameOver) return;
+    if (state.currentTurn === 'bear' && state.currentBearStep) {
+      const step = state.currentBearStep;
+      setAnim({
+        kind: 'bear',
+        stack: step.stack,
+        from: step.from,
+        to: step.to,
+        startTime: Date.now(),
+      });
     }
-  }, [state.animatingMove, state.currentTurn]);
+  }, [state.currentBearStep, state.currentTurn, state.gameOver, anim]);
 
-  // Calculate animation progress using useEffect for smooth animation
+  // Drive the active animation; on completion apply the corresponding move.
   useEffect(() => {
-    if (!animatingMove) {
-      setAnimProgress(0);
-      return;
-    }
-
-    // Cancel animation if game is reset
+    if (!anim) return;
     if (state.gameOver) {
-      setAnimatingMove(null);
+      setAnim(null);
       setAnimProgress(0);
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
       return;
     }
-    
-    const startTime = animatingMove.startTime;
-    const duration = animatingMove.duration;
-    
-    const animate = () => {
-      const now = Date.now();
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
+
+    let raf = 0;
+    const tick = () => {
+      const progress = Math.min((Date.now() - anim.startTime) / ANIMATION_DURATION_MS, 1);
       setAnimProgress(progress);
-      
       if (progress < 1) {
-        animationFrameRef.current = requestAnimationFrame(animate);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+      setAnim(null);
+      setAnimProgress(0);
+      if (anim.kind === 'player') {
+        moveStack(anim.to);
       } else {
-        // Animation complete - apply the move based on whose turn it is
-        if (state.currentTurn === 'player') {
-          moveStack(animatingMove.to);
-        } else if (state.currentTurn === 'bear' && state.processingBearMoves) {
-          // For bear moves, process the next move in the queue
-          processNextBearMove();
-        }
-        setAnimatingMove(null);
-        setAnimProgress(0);
+        processNextBearMove();
       }
     };
-    
-    animate();
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [animatingMove, moveStack, state.currentTurn, state.processingBearMoves, processNextBearMove]);
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [anim, state.gameOver, moveStack, processNextBearMove]);
+
+  const handleNewGame = () => {
+    setAnim(null);
+    setAnimProgress(0);
+    newGame();
+  };
 
   const handleCellClick = (row: number, col: number, stack: Stack | null) => {
-    if (state.gameOver || animatingMove) return;
+    if (state.gameOver || anim) return;
 
-    if (state.currentTurn === 'player') {
-      if (state.selectedStackId) {
-        if (stack && stack.id === state.selectedStackId) {
-          // Clicked same stack - pass
-          moveStack({ row, col });
-        } else if (state.validMoves.some(m => m.row === row && m.col === col)) {
-          // Valid move - start animation
-          const selectedStack = state.board.flat().find(s => s?.id === state.selectedStackId);
-          if (selectedStack) {
-            startAnimation(selectedStack, { row, col });
-          }
-        } else if (stack && stack.player === 'player') {
-          // Select different stack
-          selectStack(stack.id);
-        } else {
-          // Deselect
-          selectStack(state.selectedStackId);
+    if (state.currentTurn !== 'player') return;
+
+    if (state.selectedStackId) {
+      if (stack && stack.id === state.selectedStackId) {
+        // Clicked same stack - pass
+        moveStack({ row, col });
+      } else if (state.validMoves.some(m => m.row === row && m.col === col)) {
+        // Valid move - animate, then apply
+        const selectedStack = state.board.flat().find(s => s?.id === state.selectedStackId);
+        if (selectedStack) {
+          setAnim({
+            kind: 'player',
+            stack: selectedStack,
+            from: selectedStack.position,
+            to: { row, col },
+            startTime: Date.now(),
+          });
         }
       } else if (stack && stack.player === 'player') {
-        // Select stack
+        // Select different stack
         selectStack(stack.id);
+      } else {
+        // Deselect
+        selectStack(null);
       }
+    } else if (stack && stack.player === 'player') {
+      // Select stack
+      selectStack(stack.id);
     }
   };
 
   const handleSkyClick = (col: number) => {
-    if (state.gameOver || animatingMove) return;
+    if (state.gameOver || anim) return;
     if (state.currentTurn !== 'player') return;
     if (!state.validMoves.some(m => m.row === -1 && m.col === col)) return;
 
     const selectedStack = state.board.flat().find(s => s?.id === state.selectedStackId);
     if (selectedStack) {
-      startAnimation(selectedStack, { row: -1, col });
+      setAnim({
+        kind: 'player',
+        stack: selectedStack,
+        from: selectedStack.position,
+        to: { row: -1, col },
+        startTime: Date.now(),
+      });
     }
   };
 
-  const startAnimation = (stack: Stack, to: Position) => {
-    const from = stack.position;
-    setAnimatingMove({
-      stack,
-      from,
-      to,
-      startTime: Date.now(),
-      duration: ANIMATION_DURATION,
-    });
-  };
-
-  // During animation, hide the piece at the destination
+  // During an animation the piece is depicted by the animating element, so the
+  // cell it is leaving is shown empty.
   const getDisplayStack = (row: number, col: number): Stack | null => {
-    if (animatingMove && animatingMove.to.row === row && animatingMove.to.col === col) {
+    if (
+      anim &&
+      anim.from.row === row &&
+      anim.from.col === col &&
+      anim.from.row >= 0 &&
+      anim.from.row < BOARD_ROWS
+    ) {
       return null;
     }
     return state.board[row][col];
   };
-
-  // For sky moves, we don't hide anything on the board since destination is off-board
-  const isSkyDestination = animatingMove?.to.row === -1;
 
   return (
     <div className="game-container">
@@ -313,8 +311,8 @@ export function Board() {
           <div className="score-item sky">
             <span className="label">Sky</span>
             <span className="value">{state.playerPiecesInSky}</span>
-            {state.playerPiecesInSky >= 12 && <span className="win-badge">SUPERIOR WIN!</span>}
-            {state.playerPiecesInSky >= 10 && state.playerPiecesInSky < 12 && <span className="win-badge">WIN!</span>}
+            {state.playerPiecesInSky >= SKY_TARGET && <span className="win-badge">SUPERIOR WIN!</span>}
+            {state.playerPiecesInSky >= WIN_THRESHOLD && state.playerPiecesInSky < SKY_TARGET && <span className="win-badge">WIN!</span>}
           </div>
           <div className="score-item pit">
             <span className="label">Pit</span>
@@ -328,36 +326,37 @@ export function Board() {
       </header>
 
       <div className="game-board-wrapper">
-        <div className="board-container" style={{ position: 'relative' }}>
+        <div ref={containerRef} className="board-container" style={{ position: 'relative' }}>
           {/* Sky label */}
           <div className="sky-label">SKY</div>
           {/* Sky row */}
           <div className="sky-row">
-            {Array.from({ length: 5 }).map((_, col) => (
-              <div 
-                key={col} 
+            {Array.from({ length: BOARD_COLS }).map((_, col) => (
+              <div
+                key={col}
                 className={`sky-cell ${state.validMoves.some(m => m.row === -1 && m.col === col) ? 'valid-move' : ''}`}
                 onClick={() => handleSkyClick(col)}
               >
-                {state.playerPiecesInSky > col && (
-                  <div className="sky-piece player" />
+                {state.playerPiecesInSky > col && <div className="sky-piece player" />}
+                {col === BOARD_COLS - 1 && state.playerPiecesInSky > BOARD_COLS && (
+                  <div className="piece-count">+{state.playerPiecesInSky - BOARD_COLS}</div>
                 )}
               </div>
             ))}
           </div>
 
           {/* Main board */}
-          <div 
+          <div
             ref={boardRef}
-            className="board" 
-            role="grid" 
-            aria-label="Game board" 
+            className="board"
+            role="grid"
+            aria-label="Game board"
             style={{ position: 'relative' }}
           >
             {state.board.map((row, rowIndex) => (
               <div key={rowIndex} className="board-row" role="row">
-                {row.map((stack, colIndex) => {
-                  const displayStack = isSkyDestination ? stack : getDisplayStack(rowIndex, colIndex);
+                {row.map((_stack, colIndex) => {
+                  const displayStack = getDisplayStack(rowIndex, colIndex);
                   return (
                     <BoardCell
                       key={colIndex}
@@ -367,37 +366,37 @@ export function Board() {
                       isSelected={state.selectedStackId === displayStack?.id}
                       isValidMove={state.validMoves.some(m => m.row === rowIndex && m.col === colIndex)}
                       onClick={() => handleCellClick(rowIndex, colIndex, displayStack)}
-                      animatingMove={animatingMove}
+                      disabled={!!anim}
                     />
                   );
                 })}
               </div>
             ))}
-            
-            {/* Animating stack rendered at board level for proper positioning */}
-            {animatingMove && (
-              <AnimatingStack
-                stack={animatingMove.stack}
-                from={animatingMove.from}
-                to={animatingMove.to}
-                progress={animProgress}
-                dims={boardDims}
-              />
-            )}
           </div>
 
           {/* Ground row */}
           <div className="ground-row">
-            {Array.from({ length: 5 }).map((_, col) => (
+            {Array.from({ length: BOARD_COLS }).map((_, col) => (
               <div key={col} className="ground-cell">
-                {state.bearPiecesOnGround > col && (
-                  <div className="ground-piece bear" />
+                {state.bearPiecesOnGround > col && <div className="ground-piece bear" />}
+                {col === BOARD_COLS - 1 && state.bearPiecesOnGround > BOARD_COLS && (
+                  <div className="piece-count">+{state.bearPiecesOnGround - BOARD_COLS}</div>
                 )}
               </div>
             ))}
           </div>
           {/* Ground label */}
           <div className="ground-label">GROUND</div>
+
+          {/* Animating stack rendered at container level for proper positioning */}
+          {anim && dims.skyCenters.length === BOARD_COLS && (
+            <AnimatingStack
+              stack={anim.stack}
+              from={pointForPosition(anim.from, anim.kind, dims)}
+              to={pointForPosition(anim.to, anim.kind, dims)}
+              progress={animProgress}
+            />
+          )}
         </div>
 
         <aside className="sidebar">
@@ -405,7 +404,7 @@ export function Board() {
             <p className={`status-message ${state.currentTurn}`}>
               {state.message}
             </p>
-            
+
             <div className="game-info">
               <h3>How to Play</h3>
               <ul>
@@ -414,8 +413,8 @@ export function Board() {
                 <li>Stacks move up to their height</li>
                 <li>Diagonal or lateral only (no straight)</li>
                 <li>From top row: move diagonally up to Sky</li>
-                <li>Get 10+ pieces to Sky to win</li>
-                <li>12 pieces = Superior Win</li>
+                <li>Get {WIN_THRESHOLD}+ pieces to Sky to win</li>
+                <li>{SKY_TARGET} pieces = Superior Win</li>
                 <li>Click selected stack again to pass</li>
                 <li>Bear moves after your turn</li>
               </ul>
@@ -425,12 +424,12 @@ export function Board() {
               <div className="game-over">
                 <h2>{state.winner === 'player' ? 'Victory!' : 'Defeat'}</h2>
                 <p>{state.message}</p>
-                <button onClick={newGame} className="new-game-btn">New Game</button>
+                <button onClick={handleNewGame} className="new-game-btn">New Game</button>
               </div>
             )}
 
             {!state.gameOver && (
-              <button onClick={newGame} className="new-game-btn secondary">New Game</button>
+              <button onClick={handleNewGame} className="new-game-btn secondary">New Game</button>
             )}
 
             {state.bearLog.length > 0 && (
@@ -455,31 +454,31 @@ export function Board() {
   );
 }
 
-function BoardCell({ 
-  row, 
-  col, 
-  stack, 
-  isSelected, 
-  isValidMove, 
+function BoardCell({
+  row,
+  col,
+  stack,
+  isSelected,
+  isValidMove,
   onClick,
-  animatingMove
-}: { 
-  row: number; 
-  col: number; 
-  stack: Stack | null; 
-  isSelected: boolean; 
-  isValidMove: boolean; 
+  disabled,
+}: {
+  row: number;
+  col: number;
+  stack: Stack | null;
+  isSelected: boolean;
+  isValidMove: boolean;
   onClick: () => void;
-  animatingMove: AnimatingMove | null;
+  disabled: boolean;
 }) {
   return (
     <button
       className={`cell ${stack?.player || ''} ${isSelected ? 'selected' : ''} ${isValidMove ? 'valid-move' : ''}`}
       onClick={onClick}
-      aria-label={stack 
-        ? `${stack.player} stack of ${stack.pieces} at ${String.fromCharCode(65 + col)}${6 - row}` 
-        : `Empty cell ${String.fromCharCode(65 + col)}${6 - row}`}
-      disabled={!!animatingMove}
+      aria-label={stack
+        ? `${stack.player} stack of ${stack.pieces} at ${String.fromCharCode(65 + col)}${BOARD_ROWS - row}`
+        : `Empty cell ${String.fromCharCode(65 + col)}${BOARD_ROWS - row}`}
+      disabled={disabled}
     >
       {stack && (
         <div className="stack">

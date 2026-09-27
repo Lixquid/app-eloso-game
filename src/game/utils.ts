@@ -1,16 +1,21 @@
+/**
+ * Random source used by all dice rolls. Defaults to Math.random; tests can
+ * inject a deterministic source via setRandomSource().
+ */
+let randomSource: () => number = Math.random;
+
+export function setRandomSource(source: () => number): void {
+  randomSource = source;
+}
+
+export function resetRandomSource(): void {
+  randomSource = Math.random;
+}
+
 export function rollDie(): number {
-  return Math.floor(Math.random() * 6) + 1;
+  return Math.floor(randomSource() * 6) + 1;
 }
 
 export function rollDice(count: number): number[] {
   return Array.from({ length: count }, () => rollDie());
-}
-
-export function shuffleArray<T>(array: T[]): T[] {
-  const arr = [...array];
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
 }
