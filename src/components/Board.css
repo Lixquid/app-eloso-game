@@ -85,7 +85,8 @@
 }
 
 .sky-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   margin-bottom: 8px;
   padding: 0 4px;
@@ -150,12 +151,15 @@
 }
 
 .board-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
 }
 
 .cell {
-  flex: 1;
+  container-type: inline-size;
+  min-width: 0;
+  overflow: hidden;
   aspect-ratio: 1;
   border: 2px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
@@ -204,16 +208,19 @@
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  width: 100%;
 }
 
 .stack-pieces {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 1px;
+  width: 100%;
 }
 
 .piece {
-  width: 28px;
+  width: min(28px, 70%);
   height: 16px;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
@@ -244,8 +251,20 @@
   border-radius: 4px;
 }
 
+/* The count text matches the color of the pieces above it. */
+.cell.player .stack-height,
+.cell.player .piece-count {
+  color: #a0d4f8;
+}
+
+.cell.bear .stack-height,
+.cell.bear .piece-count {
+  color: #ffcc00;
+}
+
 .ground-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   gap: 4px;
   margin-top: 8px;
   padding: 0 4px;
@@ -380,7 +399,13 @@
     flex-direction: column;
     align-items: center;
   }
-  
+
+  .board-container {
+    flex: none;
+    width: 100%;
+    max-width: 700px;
+  }
+
   .sidebar {
     width: 100%;
     max-width: none;
@@ -401,7 +426,7 @@
   }
   
   .piece {
-    width: 22px;
+    width: min(22px, 70%);
     height: 12px;
   }
   
@@ -495,4 +520,19 @@
 
 .bear-log .log-entry.merge {
   border-left: 3px solid #ffd700;
+}
+
+/* When the cell gets too small to fit a stack of pieces plus its count
+   badge, drop the individual piece graphics and show only the count, so
+   the number of pieces stays visible inside the cell. Kept after the
+   media queries so it wins the cascade against them. */
+@container (width < 70px) {
+  .stack-pieces {
+    display: none;
+  }
+
+  .stack-height {
+    font-size: 2.1rem;
+    padding: 4px 12px;
+  }
 }
