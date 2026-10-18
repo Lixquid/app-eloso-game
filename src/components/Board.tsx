@@ -448,6 +448,11 @@ export function Board() {
               </div>
             )}
           </div>
+
+          <div className="footer-links">
+            <a href="https://lixquid.com" target="_blank" rel="noopener noreferrer">lixquid.com</a>
+            <a href="https://github.com/Lixquid/app-eloso-game" target="_blank" rel="noopener noreferrer">Source Code</a>
+          </div>
         </aside>
       </div>
     </div>

@@ -313,6 +313,25 @@
   height: fit-content;
 }
 
+.footer-links {
+  margin-top: 0.75rem;
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.footer-links a {
+  color: #8892b0;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.footer-links a:hover {
+  color: #00d4ff;
+  text-decoration: underline;
+}
+
 .status-message {
   font-size: 1.1rem;
   line-height: 1.6;
